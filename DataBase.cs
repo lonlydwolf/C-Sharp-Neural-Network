@@ -1,134 +1,98 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
 
 namespace NN
 {
+    public record TrainingExample(List<double> Inputs, List<double> Targets);
+
+    // The historical text format ends the topology line with the number of examples.
     public class DataBase
     {
-        #region Constructer
-        public DataBase(string i, string o)
+        private readonly string inputFilePath;
+        private readonly string outputFilePath;
+        private List<int> topology = new List<int>();
+        private readonly List<TrainingExample> examples = new List<TrainingExample>();
+
+        public DataBase(string inputPath, string outputPath = null)
         {
-            inputFilePath = i;
-            outputFilePath = o;
+            inputFilePath = Path.GetFullPath(inputPath);
+            outputFilePath = outputPath == null ? null : Path.GetFullPath(outputPath);
+            StringComparison comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+                ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (string.Equals(inputFilePath, outputFilePath, comparison))
+                throw new ArgumentException("Output must not overwrite the input dataset.", nameof(outputPath));
         }
-        #endregion
 
-        #region Variables
-        private string inputFilePath { get; set; }
-        private string outputFilePath { get; set; }
-        private List<string> lines { get; set; }
-        private int numberOfTestCases { get; set; }
-        #endregion
-
-        #region Functions
+        public IReadOnlyList<TrainingExample> Examples => examples;
+        public int NumberOfTestCases => examples.Count;
+        public List<int> Topology() => new List<int>(topology);
 
         public void Read()
         {
-            if (new FileInfo(inputFilePath).Length == 0)
+            string[] lines = File.ReadAllLines(inputFilePath)
+                .Where(line => !string.IsNullOrWhiteSpace(line)).ToArray();
+            if (lines.Length == 0)
+                throw new InvalidDataException("Input file is empty.");
+
+            string[] header = Values(lines[0], "Topology:");
+            if (header.Length < 3 || header.Any(value => !int.TryParse(value,
+                NumberStyles.None, CultureInfo.InvariantCulture, out int n) || n <= 0))
+                throw new InvalidDataException("Topology requires positive layer sizes and an example count.");
+
+            int count = int.Parse(header[header.Length - 1], CultureInfo.InvariantCulture);
+            List<int> parsedTopology = header.Take(header.Length - 1)
+                .Select(value => int.Parse(value, CultureInfo.InvariantCulture)).ToList();
+            if (lines.LongLength != 1L + 2L * count)
+                throw new InvalidDataException("Example count does not match the input/target pairs.");
+
+            var parsedExamples = new List<TrainingExample>();
+            for (int i = 0; i < count; i++)
             {
-                throw new InvalidOperationException("input file is Empty.");
+                var inputs = ParseNumbers(lines[1 + 2 * i], "In:", parsedTopology[0]);
+                var targets = ParseNumbers(lines[2 + 2 * i], "Target:", parsedTopology.Last());
+                parsedExamples.Add(new TrainingExample(inputs, targets));
             }
-            lines = File.ReadAllLines(inputFilePath).ToList();
+            topology = parsedTopology;
+            examples.Clear();
+            examples.AddRange(parsedExamples);
         }
 
-        public List<int> Topology()
+        private static string[] Values(string line, string prefix)
         {
-            if (!lines.First().Contains("Topology"))
-            {
-                throw new InvalidDataException("Data Format is Wrong");
-            }
-            List<int> t = new List<int>();
-            string[] seperators = { "Topology:", " " };
-            string[] values = lines.First().Split(seperators, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var v in values)
-            {
-                t.Add(int.Parse(v));
-            }
-            numberOfTestCases = t.Last();
-            t.RemoveAt(t.Count - 1);
-            lines.RemoveAt(0);
-            return t;
+            line = line.Trim();
+            if (!line.StartsWith(prefix, StringComparison.Ordinal))
+                throw new InvalidDataException($"Expected '{prefix}' at the start of a data line.");
+            return line.Substring(prefix.Length).Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
         }
 
-        public List<double> nextInputs()
+        private static List<double> ParseNumbers(string line, string prefix, int width)
         {
-            if (!lines.First().Contains("In"))
+            // Older generators repeated the label before each value on a line.
+            string[] values = Values(line, prefix).Where(value => value != prefix).ToArray();
+            if (values.Length != width)
+                throw new InvalidDataException($"{prefix} requires {width} values.");
+            var numbers = new List<double>();
+            foreach (string value in values)
             {
-                throw new InvalidDataException("Data Format is Wrong");
+                if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double number)
+                    || !double.IsFinite(number))
+                    throw new InvalidDataException($"{prefix} values must be finite numbers using '.' as the decimal separator.");
+                numbers.Add(number);
             }
-            List<double> inputs = new List<double>();
-            string[] seperators = { "In:", " " };
-            string[] values = lines.First().Split(seperators, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var v in values)
-            {
-                inputs.Add(double.Parse(v));
-            }
-            lines.RemoveAt(0);
-            return inputs;
+            return numbers;
         }
 
-        public List<double> nextTargets()
+        public void Write(StringBuilder report)
         {
-            if (!lines.First().Contains("Target"))
-            {
-                throw new InvalidDataException("Data Format is Wrong");
-            }
-            List<double> target = new List<double>();
-            string[] seperators = { "Target:", " " };
-            string[] values = lines.First().Split(seperators, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var v in values)
-            {
-                target.Add(double.Parse(v));
-            }
-            lines.RemoveAt(0);
-            return target;
+            if (outputFilePath == null)
+                return;
+            string fullPath = Path.GetFullPath(outputFilePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+            File.WriteAllText(fullPath, report.ToString());
         }
-
-        public void Create(List<int> Topology, int testCaseNumbers)
-        {
-            StringBuilder str = new StringBuilder();
-            Random random = new Random();
-            str.Append("Topology: ");
-            foreach (int t in Topology)
-            {
-                str.Append(t).Append(" ");
-            }
-            str.Append(testCaseNumbers);
-            str.AppendLine();
-            for (int i = 0; i < testCaseNumbers; i++)
-            {
-                int t = 0;
-                for (int j = 0; j < Topology[0]; j++)
-                {
-                    int n = random.Next(2);
-                    t = t ^ n;
-                    str.Append("In: ")
-                        .Append(n)
-                        .Append(".0 ");
-                }
-                str.AppendLine();
-                str.Append("Target: ")
-                    .Append(t)
-                    .Append(".0 ")
-                    .AppendLine();
-            }
-            File.WriteAllText(inputFilePath, str.ToString());
-        }
-
-        public void Write(StringBuilder str)
-        {
-            File.WriteAllText(outputFilePath, str.ToString());
-        }
-
-
-        #endregion
-
-        #region Gets & Sets
-        public int NumberOfTestCases { get => numberOfTestCases; private set {; } }
-        #endregion
-
     }
 }

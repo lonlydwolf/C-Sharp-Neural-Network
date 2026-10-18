@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -12,8 +12,11 @@ namespace NN
         /// Creats a new Network based on a certain topology
         /// </summary>
         /// <param name="topology">the number of layers and how many Neuron in each layer</param>
-        public Network(List<int> topology)// 2,4,1
+        public Network(List<int> topology, int seed = 42)
         {
+            if (topology == null || topology.Count < 2 || topology.Any(size => size <= 0))
+                throw new ArgumentException("Topology requires at least two positive layer sizes.", nameof(topology));
+            Random random = new Random(seed);
             int numLayers = topology.Count;
             for (int layerNum = 0; layerNum < numLayers; layerNum++)
             {
@@ -22,7 +25,7 @@ namespace NN
 
                 for (int neuronNum = 0; neuronNum < topology[layerNum]; neuronNum++)
                 {
-                    Layers.Last().Add(new Neuron(numOutputs, neuronNum));
+                    Layers.Last().Add(new Neuron(numOutputs, neuronNum, random));
                 }
             }
         }
@@ -43,9 +46,9 @@ namespace NN
         public void feedForward(List<double> inputValues)
         {
             //check for error
-            if (inputValues.Count != Layers[0].Count)
+            if (inputValues == null || inputValues.Count != Layers[0].Count || inputValues.Any(value => !double.IsFinite(value)))
             {
-                throw new InvalidOperationException("The number of inputs doesn't macth the number of neurons in first layer");
+                throw new InvalidOperationException("Inputs must be finite and match the input layer width.");
             }
             //-------------------------------
 
@@ -66,13 +69,15 @@ namespace NN
         public void backPropagation(List<double> targetValues)
         {
             Layer outputLayer = Layers.Last();
+            if (targetValues == null || targetValues.Count != outputLayer.Count || targetValues.Any(value => !double.IsFinite(value)))
+                throw new ArgumentException("Targets must be finite and match the output layer width.", nameof(targetValues));
             #region Error Calc
-            //calculye the average error of the last 100 traning cases for data perposes (doesn't affect the program at all)
+            // Report per-example RMSE and an exponentially smoothed error (not a rolling window).
             Error = 0.0;
             for (int i = 0; i < outputLayer.Count; i++)
             {
                 double delta = targetValues[i] - outputLayer[i].OutPutvalue;
-                Error = delta * delta;
+                Error += delta * delta;
             }
             Error /= outputLayer.Count;
             Error = Math.Sqrt(Error);
@@ -120,7 +125,8 @@ namespace NN
         #endregion
 
         #region Gets & Sets
-        public double AverageError { get => averageError; private set {; } }
+        public double AverageError => averageError;
+        public double LastError => Error;
         #endregion
     }
 

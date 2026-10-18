@@ -1,61 +1,74 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Globalization;
+using System.Linq;
 using System.Text;
 
 namespace NN
 {
     public class Trainer
     {
-        #region Constructer
-        public Trainer(string In, string Out)
+        public const int DefaultSeed = 42;
+        public const int DefaultEpochs = 10000;
+        private readonly DataBase data;
+        private readonly int seed;
+        private readonly int epochs;
+
+        public Trainer(string inputPath, string outputPath = null,
+            int seed = DefaultSeed, int epochs = DefaultEpochs)
         {
-            inputPath = In;
-            outputPath = Out;
+            if (epochs <= 0)
+                throw new ArgumentException("Epochs must be positive.", nameof(epochs));
+            data = new DataBase(inputPath, outputPath);
+            this.seed = seed;
+            this.epochs = epochs;
         }
-        #endregion
 
-        #region Variables
-        private string inputPath;
-        private string outputPath;
-        private readonly StringBuilder Str = new StringBuilder();
-        private List<int> topology = new List<int>();//topology of our Network
-        private List<double> inputValues = new List<double>();
-        private List<double> targetValues = new List<double>();
-        private List<double> results = new List<double>();
-        #endregion
-        public void startTraning()
+        internal Network Train()
         {
-            DataBase Data = new DataBase(inputPath, outputPath);
-            Data.Read();
-            topology = Data.Topology();
-            Network net = new Network(topology);
+            data.Read();
+            var network = new Network(data.Topology(), seed);
+            // Fixed example order and one seeded weight generator make this demo repeatable.
+            for (int epoch = 0; epoch < epochs; epoch++)
+                foreach (TrainingExample example in data.Examples)
+                {
+                    network.feedForward(example.Inputs);
+                    network.backPropagation(example.Targets);
+                }
+            return network;
+        }
 
-            for (int i = 0; i < Data.NumberOfTestCases; i++)
+        public string Run()
+        {
+            Network network = Train();
+            var report = new StringBuilder();
+            report.AppendLine($"Seed: {seed}; epochs: {epochs}; topology: {string.Join('-', data.Topology())}");
+            report.AppendLine("Activation: tanh; fixed bias: +1; learning rate: 0.20; momentum: 0.001");
+            double squaredError = 0;
+            int count = 0;
+            int correct = 0;
+            bool binaryTargets = data.Examples.All(example => example.Targets.All(value => value == 0 || value == 1));
+            foreach (TrainingExample example in data.Examples)
             {
-                Str.AppendLine()
-                    .Append("Pass: ")
-                    .Append(i + 1)
-                    .AppendLine();
-                inputValues.Clear();
-                targetValues.Clear();
-                inputValues = Data.nextInputs();
-                targetValues = Data.nextTargets();
-                Str.Append("Inputs: ");
-                foreach (double inputs in inputValues) { Str.Append(inputs).Append(" "); }
-                Str.AppendLine();
-                net.feedForward(inputValues);
-                results = net.getResults();
-                Str.Append("Results: ");
-                foreach (double r in results) { Str.Append(r).Append(" "); }
-                Str.AppendLine();
-                Str.Append("Targets: ");
-                foreach (double target in targetValues) { Str.Append(target).Append(" "); }
-                Str.AppendLine();
-                Str.Append("Error Avg: ")
-                   .Append(net.AverageError)
-                   .AppendLine();
-                net.backPropagation(targetValues);
+                network.feedForward(example.Inputs);
+                var results = network.getResults();
+                if (results.Any(value => !double.IsFinite(value)))
+                    throw new InvalidOperationException("Training produced a non-finite prediction.");
+                report.AppendLine($"{Format(example.Inputs)} -> {Format(results)} (target {Format(example.Targets)})");
+                for (int i = 0; i < results.Count; i++)
+                {
+                    squaredError += Math.Pow(example.Targets[i] - results[i], 2);
+                    count++;
+                    if ((results[i] >= 0.5 ? 1.0 : 0.0) == example.Targets[i]) correct++;
+                }
             }
-            Data.Write(Str);
+            report.AppendLine($"Training-set RMSE: {Math.Sqrt(squaredError / count).ToString("F6", CultureInfo.InvariantCulture)}");
+            if (binaryTargets)
+                report.AppendLine($"Binary classifications correct (threshold 0.5): {correct}/{count}");
+            data.Write(report);
+            return report.ToString();
         }
+
+        private static string Format(System.Collections.Generic.IEnumerable<double> values) =>
+            string.Join(" ", values.Select(value => value.ToString("F6", CultureInfo.InvariantCulture)));
     }
 }
