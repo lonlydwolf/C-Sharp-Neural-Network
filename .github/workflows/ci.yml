@@ -1,0 +1,17 @@
+name: XOR regression checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet build NN.csproj --configuration Release
+      - run: dotnet run --project NN.csproj --configuration Release --no-build -- --test
+      - run: dotnet run --project NN.csproj --configuration Release --no-build

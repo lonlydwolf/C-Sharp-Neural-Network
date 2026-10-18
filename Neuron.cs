@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -16,13 +16,13 @@ namespace NN
     {
 
         #region Constructor
-        public Neuron(int numberOfOutputs, int neuronIndex)
+        public Neuron(int numberOfOutputs, int neuronIndex, Random random)
         {
             for (int i = 0; i < numberOfOutputs; i++)
             {
                 outputWights.Add(new Connections());
                 Connections temp = outputWights[i];
-                temp.Weight = randomWeight();
+                temp.Weight = random.NextDouble() - 0.5;
                 outputWights[i] = temp;
             }
             Index = neuronIndex;
@@ -34,10 +34,10 @@ namespace NN
         private int Index;
         private double outputValue;
         private List<Connections> outputWights = new List<Connections>();
-        private double bias;
+        private readonly double bias;
         private double Gradient;
-        private static double traningRate = 0.20;
-        private static double Momentum = 0.001;
+        internal const double TrainingRate = 0.20;
+        internal const double Momentum = 0.001;
 
         #endregion
 
@@ -56,12 +56,6 @@ namespace NN
         private static double activationFunctionDerivative(double x)
         {
             return 1.0 - (x * x);
-        }
-
-        private double randomWeight()
-        {
-            Random random = new Random();
-            return random.NextDouble() - 0.5;
         }
 
         private double sumDOW(Layer nextLayer)
@@ -118,11 +112,12 @@ namespace NN
         {
             foreach (Neuron neuron in perviousLayer)
             {
+                // Preserve the original convention: store the unscaled update, then apply the learning rate.
                 double oldDeltaWeight = neuron.outputWights[Index].deltaWeight;
                 double newDeltaWeight = neuron.OutPutvalue * Gradient + Momentum * oldDeltaWeight;
                 Connections temp = neuron.outputWights[Index];
                 temp.deltaWeight = newDeltaWeight;
-                temp.Weight += newDeltaWeight * traningRate;
+                temp.Weight += newDeltaWeight * TrainingRate;
                 neuron.outputWights[Index] = temp;
             }
         }
